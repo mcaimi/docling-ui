@@ -1,0 +1,12 @@
+# docling-ui — Agent Guide
+
+Vite + React + TypeScript UI for [docling-scheduler](https://github.com/mcaimi/docling-scheduler). It talks only to the scheduler's REST API (`/api`, bearer token kept in `sessionStorage`) and SSE log stream; it knows nothing about the agent beyond what the API returns.
+
+- Stack: TanStack Query (polling), react-hook-form + zod built from `/api/settings/schema`, Tailwind v4 tokens in `src/index.css` (validated chart palette, light and dark selected separately), Recharts, `EventSource` for logs.
+- The scheduler runs one executor, reported by `/api/targets` as `executor.name` (`podman` or `kubernetes`), and `target.type` must match it. The target holds image, host folder, shards, CPUs, memory. The form branches on `executor.capabilities` from `/api/targets` (`local_source`, `local_images`, `host_gateway`; `executorCapabilities()` in `src/lib/executor.ts` falls back to Podman's for schedulers that predate them), never on the executor's name. Names are only used for wording (`executorUnit()`: containers vs pods), which also labels past runs by their `target_type`:
+  - **Podman**: the host folder is mounted at `/data/in`; it's required only when the `source_backend` setting is `local` and sent as `null` for `s3`.
+  - **Kubernetes** (one Job per shard attempt): S3 sources only. The host folder is never shown or sent, and a `local` source is a form error on `settings.source_backend`. Images are pulled from a registry, so `localhost/` refs are rejected. Runtime rows are pods (`container_id` = Job name), and an `exited` row may have no exit code, only an `error` (cancelled, DeadlineExceeded, ImagePullBackOff…), which `runtimeStatus.ts` turns into the label.
+- `src/lib/settingsForm.ts`: visibility (`depends_on`), change detection, overrides payload, validation. Field paths `settings.<key>` / `target.<field>` match the scheduler's pre-flight error fields.
+- `src/lib/progress.ts`: cross-shard throughput (sum each shard's latest value per timestamp; never align steps) and the document cursor merge (restarts on a new `generation`).
+- `src/features/designer`, `features/monitor`, `features/history`: pages. `src/api/`: typed client and query hooks.
+- Commands: `npm run dev` (proxies `/api` to 127.0.0.1:8765; start the scheduler with `SCHEDULER_ALLOWED_ORIGINS=http://localhost:5173`), `npm run build`, `npm test` (vitest), `npm run typecheck`. There's no end-to-end suite; test against a real scheduler under Podman, or against a cluster with `SCHEDULER_EXECUTOR=kubernetes`.
