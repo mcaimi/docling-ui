@@ -110,3 +110,35 @@ body {
 .tabular {
   font-variant-numeric: tabular-nums;
 }
+
+/* Wizard step transitions: slide in from the side we're moving towards. */
+@theme {
+  --animate-step-next: step-from-right 280ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  --animate-step-back: step-from-left 280ms cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  @keyframes step-from-right {
+    from {
+      transform: translateX(100%);
+      opacity: 0;
+    }
+  }
+  @keyframes step-from-left {
+    from {
+      transform: translateX(-100%);
+      opacity: 0;
+    }
+  }
+}
+
+@keyframes step-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-step-next,
+  .animate-step-back {
+    animation: step-fade 150ms ease-out;
+  }
+}

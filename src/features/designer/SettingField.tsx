@@ -1,12 +1,7 @@
 import { useFormContext } from 'react-hook-form'
 import type { SettingSchema, SettingsDefaults } from '@/api/types'
 import { Field, Input, Select, Textarea } from '@/components/ui/field'
-import { isChanged, toFormValue, type RunFormValues } from '@/lib/settingsForm'
-
-function label(key: string): string {
-  const text = key.replace(/_/g, ' ')
-  return text.charAt(0).toUpperCase() + text.slice(1)
-}
+import { isChanged, settingLabel as label, toFormValue, type RunFormValues } from '@/lib/settingsForm'
 
 export function SettingField({ spec, defaults }: { spec: SettingSchema; defaults: SettingsDefaults }) {
   const { register, watch, formState } = useFormContext<RunFormValues>()

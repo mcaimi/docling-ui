@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { FormProvider, useForm, useWatch, type Path, type Resolver } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Rocket, ShieldCheck } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Rocket, ShieldCheck, SkipForward } from 'lucide-react'
 import { ApiError, apiFetch } from '@/api/client'
 import { useLaunch, useSettingsDefaults, useSettingsSchema, useTargets, useValidate } from '@/api/queries'
 import type { Preflight, RunRecord, RunRequest, SettingSchema, SettingsDefaults, Targets } from '@/api/types'
@@ -13,17 +13,22 @@ import {
   buildRunRequest,
   defaultSettingValues,
   formValuesFromRun,
+  groupDefaults,
   groupSettings,
   isChanged,
-  isVisible,
+  stepFieldPaths,
+  stepForField,
+  wizardSteps,
   type RunFormValues,
 } from '@/lib/settingsForm'
 import { executorCapabilities } from '@/lib/executor'
 import { PreflightPanel } from './PreflightPanel'
-import { SettingField } from './SettingField'
+import { SettingsStep } from './SettingsStep'
+import { Stepper, type StepStatus } from './Stepper'
+import { SummaryStep, type FieldIssue } from './SummaryStep'
 import { TargetPanel } from './TargetPanel'
 
-const OPEN_GROUPS = new Set(['prompt', 'chunking', 'embeddings', 'vector_store'])
+const SUMMARY = 'summary'
 
 export function DesignerPage() {
   const schema = useSettingsSchema()
@@ -84,10 +89,71 @@ function DesignerForm({
   const [report, setReport] = useState<Preflight | null>(null)
   const [validatedRequest, setValidatedRequest] = useState<string | null>(null)
   const values = useWatch({ control: form.control }) as RunFormValues
+  const settings = values.settings ?? {}
   const currentRequest = JSON.stringify(buildRunRequest(schema, values, defaults, capabilities))
   const stale = report !== null && validatedRequest !== currentRequest
   const byKey = useMemo(() => new Map(schema.map((s) => [s.key, s])), [schema])
-  const groups = useMemo(() => groupSettings(schema), [schema])
+  const groupOrder = useMemo(() => groupSettings(schema).map((g) => g.group), [schema])
+
+  // wizard: one step per visible settings group, then the summary
+  const steps = wizardSteps(schema, settings)
+  const order = [...steps.map((s) => s.group), SUMMARY]
+  const [active, setActive] = useState(order[0]!)
+  const index = Math.max(0, order.indexOf(active))
+  const activeKey = order[index]!
+  const step = steps[index]
+  const [direction, setDirection] = useState<'next' | 'back'>('next')
+  // a re-run starts from a complete configuration, so every step is reachable
+  const [visited, setVisited] = useState<Set<string>>(() => new Set(source ? order : [order[0]!]))
+  const [skipped, setSkipped] = useState<Set<string>>(() => new Set())
+  const [blocked, setBlocked] = useState(false)
+  const headingRef = useRef<HTMLHeadingElement>(null)
+  const mounted = useRef(false)
+
+  const goTo = (key: string) => {
+    setDirection(order.indexOf(key) < index ? 'back' : 'next')
+    setActive(key)
+    setVisited((v) => new Set(v).add(key))
+    setBlocked(false)
+  }
+
+  // the step after `group`, from the settings as they are now (they decide which steps exist)
+  const stepAfter = (group: string) => {
+    const position = groupOrder.indexOf(group)
+    return wizardSteps(schema, form.getValues('settings')).find((s) => groupOrder.indexOf(s.group) > position)?.group ?? SUMMARY
+  }
+
+  useEffect(() => {
+    if (!mounted.current) {
+      mounted.current = true
+      return
+    }
+    headingRef.current?.focus()
+  }, [activeKey])
+
+  const issues: FieldIssue[] = [
+    ...Object.entries(form.formState.errors.settings ?? {}).map(([key, e]) => ({
+      field: `settings.${key}`,
+      message: String(e?.message ?? 'Invalid value'),
+      step: steps.find((s) => s.group === byKey.get(key)?.group) ?? null,
+    })),
+    ...Object.entries(form.formState.errors.target ?? {}).map(([key, e]) => ({
+      field: `target.${key}`,
+      message: String((e as { message?: string } | undefined)?.message ?? 'Invalid value'),
+      step: null,
+    })),
+  ]
+  const statuses: StepStatus[] = [
+    ...steps.map((s) => ({
+      key: s.group,
+      title: s.title,
+      visited: visited.has(s.group),
+      skipped: skipped.has(s.group),
+      changed: s.settings.filter((spec) => isChanged(spec, settings[spec.key], defaults)).length,
+      errors: issues.filter((i) => i.step?.group === s.group).length,
+    })),
+    { key: SUMMARY, title: 'Summary', visited: visited.has(SUMMARY), skipped: false, changed: 0, errors: 0 },
+  ]
 
   const applyServerErrors = (preflight: Preflight) => {
     for (const e of preflight.errors) {
@@ -105,6 +171,37 @@ function DesignerForm({
     applyServerErrors(result)
   })
 
+  // arriving at the summary runs the pre-flight checks, unless they're current
+  useEffect(() => {
+    if (activeKey === SUMMARY && (report === null || stale)) void onValidate()
+  }, [activeKey])
+
+  const onNext = async () => {
+    if (!step) return
+    const ok = await form.trigger(stepFieldPaths(step, settings, capabilities) as Path<RunFormValues>[])
+    if (!ok) {
+      setBlocked(true)
+      return
+    }
+    goTo(stepAfter(step.group))
+  }
+
+  const onSkip = () => {
+    if (!step) return
+    const reset = groupDefaults(schema, defaults, step.group)
+    for (const [key, value] of Object.entries(reset)) {
+      form.setValue(`settings.${key}`, value, { shouldDirty: true })
+    }
+    form.clearErrors(Object.keys(reset).map((key) => `settings.${key}` as const))
+    setSkipped((s) => new Set(s).add(step.group))
+    goTo(stepAfter(step.group))
+  }
+
+  const onSubmit = (e: FormEvent) => {
+    e.preventDefault()
+    void (step ? onNext() : onValidate())
+  }
+
   const onLaunch = async () => {
     if (!validatedRequest) return
     try {
@@ -119,12 +216,50 @@ function DesignerForm({
     }
   }
 
+  const stepOfField = (field: string) => {
+    const group = stepForField(schema, field)
+    return steps.find((s) => s.group === group) ?? null
+  }
+
   const failure = validate.error ?? (launch.error instanceof ApiError && launch.error.status === 400 ? null : launch.error)
+  const status = validate.isPending
+    ? 'Running the pre-flight checks…'
+    : !report
+      ? null
+      : stale
+        ? 'The configuration changed since the last check: validate again in the side panel.'
+        : report.ok
+          ? 'Pre-flight checks passed. Launch when ready.'
+          : 'Pre-flight checks failed: see the side panel.'
 
   return (
     <FormProvider {...form}>
-      <form onSubmit={onValidate} className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_380px]" noValidate>
-        <div className="flex flex-col gap-4">
+      <form onSubmit={onSubmit} className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,4fr)]" noValidate>
+        <aside className="flex flex-col gap-4 lg:sticky lg:top-4 lg:self-start">
+          <TargetPanel targets={targets} />
+          <Button variant="secondary" onClick={() => void onValidate()} disabled={validate.isPending}>
+            <ShieldCheck className="size-4" aria-hidden />
+            {validate.isPending ? 'Validating…' : 'Validate'}
+          </Button>
+          {failure && (
+            <Alert tone="critical" title="Request failed">
+              {failure.message}
+            </Alert>
+          )}
+          {report && (
+            <PreflightPanel
+              report={report}
+              stale={stale}
+              stepTitle={(field) => stepOfField(field)?.title ?? null}
+              onSelect={(field) => {
+                const target = stepOfField(field)
+                if (target) goTo(target.group)
+              }}
+            />
+          )}
+        </aside>
+
+        <div className="flex min-w-0 flex-col gap-4">
           <div>
             <h1 className="text-lg font-semibold">New run</h1>
             <p className="text-sm text-ink-2">
@@ -132,52 +267,65 @@ function DesignerForm({
               are sent.
             </p>
           </div>
-          {groups.map(({ group, title, settings }) => {
-            const visible = settings.filter((s) => isVisible(s, values.settings ?? {}, byKey))
-            if (!visible.length) return null
-            const changed = visible.filter((s) => isChanged(s, values.settings?.[s.key], defaults)).length
-            return (
-              <details key={group} open={OPEN_GROUPS.has(group) || changed > 0} className="group rounded-lg bg-surface ring-1 ring-line">
-                <summary className="flex cursor-pointer items-center justify-between px-4 py-3 text-sm font-semibold text-ink">
-                  {title}
-                  {changed > 0 && <span className="text-xs font-normal text-ink-2">{changed} changed</span>}
-                </summary>
-                <div className="grid gap-4 border-t border-grid p-4 sm:grid-cols-2">
-                  {visible.map((spec) => (
-                    <div key={spec.key} className={spec.type === 'json' || spec.key === 'user_prompt' ? 'sm:col-span-2' : undefined}>
-                      <SettingField spec={spec} defaults={defaults} />
-                    </div>
-                  ))}
-                </div>
-              </details>
-            )
-          })}
-        </div>
-
-        <aside className="flex flex-col gap-4 lg:sticky lg:top-4 lg:self-start">
-          <TargetPanel targets={targets} />
-          <div className="flex gap-2">
-            <Button type="submit" variant="secondary" className="flex-1" disabled={validate.isPending}>
-              <ShieldCheck className="size-4" aria-hidden />
-              {validate.isPending ? 'Validating…' : 'Validate'}
-            </Button>
-            <Button
-              variant="primary"
-              className="flex-1"
-              onClick={onLaunch}
-              disabled={!report?.ok || stale || launch.isPending}
-            >
-              <Rocket className="size-4" aria-hidden />
-              {launch.isPending ? 'Launching…' : 'Launch'}
-            </Button>
+          <Stepper steps={statuses} active={activeKey} onSelect={goTo} />
+          {/* clips the sliding step; the padding keeps the card's ring visible */}
+          <div className="overflow-x-clip p-px">
+            <div key={activeKey} className={direction === 'next' ? 'animate-step-next' : 'animate-step-back'}>
+              {step ? (
+                <SettingsStep
+                  step={step}
+                  defaults={defaults}
+                  changed={statuses[index]!.changed}
+                  headingRef={headingRef}
+                />
+              ) : (
+                <SummaryStep
+                  steps={steps}
+                  schema={schema}
+                  defaults={defaults}
+                  values={values}
+                  targets={targets}
+                  capabilities={capabilities}
+                  skipped={skipped}
+                  issues={issues}
+                  status={status}
+                  onEdit={goTo}
+                  headingRef={headingRef}
+                />
+              )}
+            </div>
           </div>
-          {failure && (
-            <Alert tone="critical" title="Request failed">
-              {failure.message}
-            </Alert>
-          )}
-          {report && <PreflightPanel report={report} stale={stale} />}
-        </aside>
+          <footer className="flex flex-wrap items-center gap-2 border-t border-grid pt-4">
+            <Button onClick={() => goTo(order[index - 1]!)} disabled={index === 0}>
+              <ChevronLeft className="size-4" aria-hidden />
+              Back
+            </Button>
+            {blocked && (
+              <p role="alert" className="text-sm text-critical-text">
+                Fix the highlighted fields to continue.
+              </p>
+            )}
+            <div className="ml-auto flex gap-2">
+              {step && !step.required && (
+                <Button variant="ghost" onClick={onSkip} title="Reset this step to the scheduler's defaults and continue">
+                  <SkipForward className="size-4" aria-hidden />
+                  Skip
+                </Button>
+              )}
+              {step ? (
+                <Button type="submit" variant="primary">
+                  {index === steps.length - 1 ? 'Review' : 'Next'}
+                  <ChevronRight className="size-4" aria-hidden />
+                </Button>
+              ) : (
+                <Button variant="primary" onClick={onLaunch} disabled={!report?.ok || stale || launch.isPending}>
+                  <Rocket className="size-4" aria-hidden />
+                  {launch.isPending ? 'Launching…' : 'Launch'}
+                </Button>
+              )}
+            </div>
+          </footer>
+        </div>
       </form>
     </FormProvider>
   )
