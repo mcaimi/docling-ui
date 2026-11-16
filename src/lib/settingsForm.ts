@@ -29,6 +29,9 @@ export const GROUP_TITLES: Record<string, string> = {
   tracing: 'MLflow',
 }
 
+/** Wizard steps that can't be skipped: the source decides where the documents come from. */
+export const REQUIRED_GROUPS = new Set(['source'])
+
 /** Values the scheduler forces for managed settings (relevant to depends_on). */
 const MANAGED_VALUES: Record<string, string> = { enable_tracing: '1' }
 
@@ -57,6 +60,11 @@ export function usesHostFolder(
   capabilities: Pick<ExecutorCapabilities, 'local_source'>,
 ): boolean {
   return usesLocalSource(settings) && capabilities.local_source
+}
+
+export function settingLabel(key: string): string {
+  const text = key.replace(/_/g, ' ')
+  return text.charAt(0).toUpperCase() + text.slice(1)
 }
 
 export function editableSettings(schema: SettingSchema[]): SettingSchema[] {
@@ -88,12 +96,17 @@ function effectiveValue(spec: SettingSchema | undefined, key: string, values: Re
   return value === undefined ? '' : String(value)
 }
 
+/** The prompt-extraction LLM only runs when there's a prompt to extract settings from. */
+function groupActive(group: string, values: Record<string, SettingValue>): boolean {
+  return group !== 'llm' || !('user_prompt' in values) || String(values.user_prompt).trim() !== ''
+}
+
 export function isVisible(
   spec: SettingSchema,
   values: Record<string, SettingValue>,
   byKey: Map<string, SettingSchema>,
 ): boolean {
-  return Object.entries(spec.depends_on).every(([key, allowed]) =>
+  return groupActive(spec.group, values) && Object.entries(spec.depends_on).every(([key, allowed]) =>
     allowed.includes(effectiveValue(byKey.get(key), key, values)),
   )
 }
@@ -254,4 +267,57 @@ export function groupSettings(schema: SettingSchema[]): { group: string; title: 
       settings: editable.filter((s) => s.group === group),
     }))
     .filter((g) => g.settings.length > 0)
+}
+
+export interface WizardStep {
+  group: string
+  title: string
+  /** Only the currently visible settings. */
+  settings: SettingSchema[]
+  required: boolean
+}
+
+/** One step per group that has visible settings, in display order. */
+export function wizardSteps(schema: SettingSchema[], values: Record<string, SettingValue>): WizardStep[] {
+  const byKey = new Map(schema.map((s) => [s.key, s]))
+  return groupSettings(schema)
+    .map(({ group, title, settings }) => ({
+      group,
+      title,
+      settings: settings.filter((s) => isVisible(s, values, byKey)),
+      required: REQUIRED_GROUPS.has(group),
+    }))
+    .filter((step) => step.settings.length > 0)
+}
+
+/** Fields checked before leaving a step. The source step also owns the host folder it requires. */
+export function stepFieldPaths(
+  step: WizardStep,
+  values: Record<string, SettingValue>,
+  capabilities: Pick<ExecutorCapabilities, 'local_source'>,
+): string[] {
+  const paths = step.settings.map((s) => `settings.${s.key}`)
+  if (step.group === 'source' && usesHostFolder(values, capabilities)) paths.push('target.host_folder')
+  return paths
+}
+
+/** Default form values of a group's settings, used when its step is skipped. */
+export function groupDefaults(
+  schema: SettingSchema[],
+  defaults: SettingsDefaults,
+  group: string,
+): Record<string, SettingValue> {
+  const all = defaultSettingValues(schema, defaults)
+  return Object.fromEntries(
+    editableSettings(schema)
+      .filter((s) => s.group === group)
+      .map((s) => [s.key, all[s.key]!]),
+  )
+}
+
+/** The group (wizard step) of an error field such as "settings.chunk_size"; target fields have none. */
+export function stepForField(schema: SettingSchema[], field: string): string | null {
+  if (!field.startsWith('settings.')) return null
+  const key = field.slice('settings.'.length)
+  return editableSettings(schema).find((s) => s.key === key)?.group ?? null
 }

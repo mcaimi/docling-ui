@@ -10,7 +10,18 @@ function fieldLabel(field: string): string {
   return `${scope === 'target' ? 'Target' : 'Setting'} · ${key.replace(/_/g, ' ')}`
 }
 
-export function PreflightPanel({ report, stale }: { report: Preflight; stale: boolean }) {
+export function PreflightPanel({
+  report,
+  stale,
+  stepTitle,
+  onSelect,
+}: {
+  report: Preflight
+  stale: boolean
+  /** Title of the wizard step that holds an error field, if any. */
+  stepTitle?: (field: string) => string | null
+  onSelect?: (field: string) => void
+}) {
   const c = report.concurrency
   return (
     <Card aria-live="polite">
@@ -31,6 +42,11 @@ export function PreflightPanel({ report, stale }: { report: Preflight; stale: bo
               {report.errors.map((e) => (
                 <li key={`${e.field}-${e.message}`}>
                   <span className="font-medium text-ink">{fieldLabel(e.field)}:</span> {e.message}
+                  {onSelect && stepTitle?.(e.field) && (
+                    <button type="button" className="ml-1 text-accent hover:underline" onClick={() => onSelect(e.field)}>
+                      Go to {stepTitle(e.field)}
+                    </button>
+                  )}
                 </li>
               ))}
             </ul>

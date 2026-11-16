@@ -2,7 +2,7 @@
 
 Web UI for [docling-scheduler](https://github.com/mcaimi/docling-scheduler): design [docling-agent](https://github.com/mcaimi/docling-agent) runs, validate them, launch them, and follow their progress.
 
-- **New run**: a settings form generated from the scheduler's `/api/settings/schema` (the agent's settings contract), with defaults from the scheduler's `.env`. Secrets are only shown as set/unset and can be left empty to keep the `.env` value. Pre-flight shows errors on the fields, warnings, the shard plan and a redacted launch preview. Launch is enabled once validation passes.
+- **New run**: a step-by-step wizard generated from the scheduler's `/api/settings/schema` (the agent's settings contract), one step per settings group, with defaults from the scheduler's `.env`. Every step but Source can be skipped (keeping the defaults), and a final summary reviews the job before launch. Secrets are only shown as set/unset and can be left empty to keep the `.env` value. Pre-flight shows errors on the fields, warnings, the shard plan and a redacted launch preview. Launch is enabled once validation passes.
 - **Run monitor**: progress, KPIs, documents completed over time, per-shard status, a per-document table with stage timings (from MLflow traces), live logs per shard (level and file filters), containers (or Kubernetes pods) with resource usage and events, and merged error reports. Cancel, retry failed shards, re-run, delete.
 - **Runs**: history with a status filter and re-run.
 

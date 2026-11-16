@@ -6,8 +6,12 @@ import {
   buildRunRequest,
   defaultSettingValues,
   formValuesFromRun,
+  groupDefaults,
   groupSettings,
   isVisible,
+  stepFieldPaths,
+  stepForField,
+  wizardSteps,
 } from './settingsForm'
 
 function spec(key: string, extra: Partial<SettingSchema> = {}): SettingSchema {
@@ -165,5 +169,47 @@ describe('validation', () => {
     expect(errors({ chunk_size: 'abc' }, { host_folder: '', shards: '9' })).toEqual(
       expect.arrayContaining(['settings.chunk_size', 'target.shards', 'target.host_folder']),
     )
+  })
+})
+
+describe('wizard steps', () => {
+  const withPrompt = [...schema, spec('user_prompt', { group: 'prompt' }), spec('llm_model', { group: 'llm' })]
+
+  it('has one step per group with visible settings, source required', () => {
+    const values = defaultSettingValues(schema, defaults)
+    const steps = wizardSteps(schema, values)
+    expect(steps.map((s) => s.group)).toEqual(['source', 'conversion', 'chunking', 'embeddings', 'vector_store', 'tracing'])
+    expect(steps.filter((s) => s.required).map((s) => s.group)).toEqual(['source'])
+    expect(steps.find((s) => s.group === 'source')!.settings.map((s) => s.key)).toEqual(['source_backend'])
+  })
+
+  it('drops the extraction LLM without a prompt, and stops sending its settings', () => {
+    const values = { ...defaultSettingValues(withPrompt, defaults), llm_model: 'granite' }
+    expect(wizardSteps(withPrompt, values).map((s) => s.group)).not.toContain('llm')
+    expect(buildOverrides(withPrompt, values, defaults)).not.toHaveProperty('llm_model')
+
+    const prompted = { ...values, user_prompt: 'use hybrid chunking' }
+    expect(wizardSteps(withPrompt, prompted).map((s) => s.group)).toContain('llm')
+    expect(buildOverrides(withPrompt, prompted, defaults)).toMatchObject({ llm_model: 'granite' })
+  })
+
+  it('checks the host folder with the source step only when it is used', () => {
+    const values = defaultSettingValues(schema, defaults)
+    const source = wizardSteps(schema, values).find((s) => s.group === 'source')!
+    expect(stepFieldPaths(source, values, podman)).toEqual(['settings.source_backend', 'target.host_folder'])
+    expect(stepFieldPaths(source, values, kubernetes)).toEqual(['settings.source_backend'])
+    const chunking = wizardSteps(schema, values).find((s) => s.group === 'chunking')!
+    expect(stepFieldPaths(chunking, values, podman)).toEqual(['settings.chunking_strategy', 'settings.chunk_size', 'settings.chunk_overlap'])
+  })
+
+  it('resets a group to its defaults, hidden settings included', () => {
+    expect(groupDefaults(schema, defaults, 'chunking')).toEqual({ chunking_strategy: 'fixed', chunk_size: '1000', chunk_overlap: '100' })
+    expect(groupDefaults(schema, defaults, 'embeddings')).toEqual({ embedding_api_key: '' })
+  })
+
+  it('maps error fields to their step', () => {
+    expect(stepForField(schema, 'settings.chunk_size')).toBe('chunking')
+    expect(stepForField(schema, 'settings.folder_path')).toBeNull()
+    expect(stepForField(schema, 'target.host_folder')).toBeNull()
   })
 })
