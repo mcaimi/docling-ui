@@ -260,3 +260,51 @@ export interface LogEntry {
   stage?: string
   [key: string]: unknown
 }
+
+export type WorkflowStatus = 'pending' | 'running' | 'ok' | 'error' | 'skipped'
+
+export type WorkflowStepKey = 'prompt_extraction' | 'discovery' | 'pipeline' | 'aggregation'
+
+export type DocumentStageKey = StageName
+
+export interface WorkflowStage {
+  key: DocumentStageKey
+  status: WorkflowStatus
+  ok: number
+  failed: number
+  avg_ms: number | null
+}
+
+/** One of the agent's top-level steps; a running step has no trace yet, so its state is inferred. */
+export interface WorkflowStep {
+  key: WorkflowStepKey
+  // the agent's span name
+  name: string
+  status: WorkflowStatus
+  started_at_ms: number | null
+  duration_ms: number | null
+  error: string | null
+  // pipeline only: per-document stages, aggregated over finished documents
+  stages?: WorkflowStage[]
+}
+
+/** /api/runs/{id}/shards/{n}/workflow: the shard's latest MLflow run, rebuilt from its traces. */
+export interface ShardWorkflow {
+  shard_index: number
+  run_id: string | null
+  run_status: string | null
+  attempts: number
+  link: string | null
+  documents: { total: number | null; completed: number; failed: number }
+  steps: WorkflowStep[]
+  // newest first
+  recent_documents: {
+    trace_id: string
+    file: string | null
+    status: string | null
+    stage_failed: string | null
+    error: string | null
+    duration_ms: number | null
+    stages_ms: Partial<Record<StageName, number>>
+  }[]
+}

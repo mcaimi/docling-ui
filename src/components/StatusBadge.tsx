@@ -28,6 +28,7 @@ const STATUS_TONES: Record<string, { tone: Tone; label: string }> = {
   PENDING: { tone: 'neutral', label: 'Pending' },
   SUBMITTING: { tone: 'neutral', label: 'Submitting' },
   SCHEDULED: { tone: 'neutral', label: 'Scheduled' },
+  SKIPPED: { tone: 'neutral', label: 'Skipped' },
 }
 
 export function StatusBadge({ status, label, className }: { status: string | null | undefined; label?: string; className?: string }) {

@@ -11,15 +11,17 @@ export function ShardsTable({
   shardCount,
   runtime,
   overview,
+  onOpenShard,
 }: {
   shardCount: number
   runtime: ShardRuntime[]
   overview: MlflowOverview | undefined
+  onOpenShard: (index: number) => void
 }) {
   const byIndex = new Map(runtime.map((s) => [s.shard_index, s]))
   return (
     <Card>
-      <CardHeader title="Shards" description={`${shardCount} ${shardCount === 1 ? 'instance' : 'instances'}`} />
+      <CardHeader title="Shards" description={`${shardCount} ${shardCount === 1 ? 'instance' : 'instances'} · select a shard to see its agent workflow`} />
       <Table aria-label="Shards" className="mt-2">
         <thead>
           <tr>
@@ -40,7 +42,16 @@ export function ShardsTable({
             const { status, label, detail } = shardStatus(byIndex.get(index))
             return (
               <tr key={index}>
-                <Td className="tabular">{index}</Td>
+                <Td className="tabular">
+                  <button
+                    type="button"
+                    onClick={() => onOpenShard(index)}
+                    aria-label={`Show shard ${index} workflow`}
+                    className="rounded font-medium text-accent underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-accent"
+                  >
+                    {index}
+                  </button>
+                </Td>
                 <Td title={detail}>
                   <StatusBadge status={status} label={label} />
                 </Td>

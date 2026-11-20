@@ -26,6 +26,7 @@ import { ErrorsPanel } from './ErrorsPanel'
 import { LogViewer } from './LogViewer'
 import { RuntimePanel } from './RuntimePanel'
 import { ShardsTable } from './ShardsTable'
+import { ShardWorkflowDialog } from './ShardWorkflowDialog'
 import { ThroughputChart } from './ThroughputChart'
 import { useDocuments } from './useDocuments'
 
@@ -128,6 +129,7 @@ export function MonitorPage() {
   const errors = useErrorReports(runId, live)
   const documents = useDocuments(runId, live)
   const [tab, setTab] = useState('documents')
+  const [openShard, setOpenShard] = useState<number | null>(null)
   const queryClient = useQueryClient()
   const final = run?.final ?? false
   const { refresh: refreshDocuments } = documents
@@ -197,7 +199,8 @@ export function MonitorPage() {
       {overview.error && <Alert tone="critical" title="MLflow unavailable">{overview.error.message}</Alert>}
 
       <ThroughputChart series={series} startMs={run.created_at * 1000} total={expected} />
-      <ShardsTable shardCount={run.shard_count} runtime={run.shards} overview={overview.data} />
+      <ShardsTable shardCount={run.shard_count} runtime={run.shards} overview={overview.data} onOpenShard={setOpenShard} />
+      <ShardWorkflowDialog runId={run.id} shardIndex={openShard} live={live} onClose={() => setOpenShard(null)} />
 
       <Card>
         <CardBody>

@@ -9,6 +9,7 @@ import type {
   RunView,
   RuntimeView,
   SettingSchema,
+  ShardWorkflow,
   SettingsDefaults,
   Targets,
 } from './types'
@@ -69,6 +70,15 @@ export function useRuntime(runId: string, live: boolean) {
     queryFn: () => apiFetch<RuntimeView>(`/api/runs/${encodeURIComponent(runId)}/runtime`),
     refetchInterval: live ? 5000 : false,
     placeholderData: (previous) => previous,
+  })
+}
+
+export function useShardWorkflow(runId: string, shardIndex: number | null, live: boolean) {
+  return useQuery({
+    queryKey: ['run', runId, 'workflow', shardIndex],
+    queryFn: () => apiFetch<ShardWorkflow>(`/api/runs/${encodeURIComponent(runId)}/shards/${shardIndex}/workflow`),
+    enabled: shardIndex !== null,
+    refetchInterval: live ? POLL_MS : false,
   })
 }
 

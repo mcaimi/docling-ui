@@ -78,4 +78,55 @@ describe('MonitorPage', () => {
     expect(screen.getByText(/Partial and non-blocking/)).toBeInTheDocument()
     expect(screen.getByRole('table', { name: 'Pipeline errors' })).toBeInTheDocument()
   })
+
+  it('opens a shard workflow popup from the shard id', async () => {
+    setToken('t')
+    const workflow = {
+      shard_index: 1, run_id: 'r1', run_status: 'FAILED', attempts: 2, link: 'http://mlflow/#/runs/r1',
+      documents: { total: 2, completed: 1, failed: 1 },
+      steps: [
+        { key: 'prompt_extraction', name: 'NLP prompt extraction', status: 'ok', started_at_ms: 0, duration_ms: 20, error: null },
+        { key: 'discovery', name: 'document discovery', status: 'ok', started_at_ms: 0, duration_ms: 40, error: null },
+        {
+          key: 'pipeline', name: 'Parallel pipeline', status: 'error', started_at_ms: null, duration_ms: null,
+          error: 'interrupted: the shard exited before this step finished',
+          stages: [
+            { key: 'convert_pdf', status: 'error', ok: 1, failed: 1, avg_ms: 900 },
+            { key: 'chunk_doc', status: 'ok', ok: 1, failed: 0, avg_ms: 100 },
+            { key: 'embed_doc', status: 'ok', ok: 1, failed: 0, avg_ms: 300 },
+            { key: 'store_doc', status: 'skipped', ok: 0, failed: 0, avg_ms: null },
+          ],
+        },
+        { key: 'aggregation', name: 'Results aggregation', status: 'pending', started_at_ms: null, duration_ms: null, error: null },
+      ],
+      recent_documents: [
+        { trace_id: 't9', file: 'scan.pdf', status: 'ERROR', stage_failed: 'convert', error: 'bad pdf', duration_ms: 60, stages_ms: { convert_pdf: 60 } },
+      ],
+    }
+    const calls = mockApi({
+      'GET /api/runs/abc123': run,
+      'GET /api/runs/abc123/mlflow': overview,
+      'GET /api/runs/abc123/documents': documents,
+      'GET /api/runs/abc123/runtime': { error: null, containers: run.shards, events: [], resources: [] },
+      'GET /api/runs/abc123/errors': [],
+      'GET /api/runs/abc123/shards/1/workflow': workflow,
+    })
+    renderAt(<MonitorPage />, { path: '/runs/:runId', route: '/runs/abc123' })
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: 'Show shard 1 workflow' }))
+
+    const dialog = await screen.findByRole('dialog', { name: /Shard 1 workflow/ })
+    expect(calls.some((c) => c.url === '/api/runs/abc123/shards/1/workflow')).toBe(true)
+    expect(await within(dialog).findByText(/Stopped at Document pipeline: interrupted/)).toBeInTheDocument()
+    const steps = within(dialog).getByRole('list', { name: 'Workflow steps' })
+    expect(within(steps).getByText('Document discovery')).toBeInTheDocument()
+    expect(within(steps).getByText('2 documents')).toBeInTheDocument()
+    const stages = within(dialog).getByRole('list', { name: 'Stages' })
+    expect(within(stages).getByText('1 failed', { exact: false })).toBeInTheDocument()
+    expect(within(stages).getByText('Skipped')).toBeInTheDocument()
+    expect(within(dialog).getByRole('table', { name: 'Recent documents' })).toHaveTextContent('convert: bad pdf')
+
+    await user.click(within(dialog).getByRole('button', { name: 'Close' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
 })
